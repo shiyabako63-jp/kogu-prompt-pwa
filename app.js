@@ -25,12 +25,10 @@
     btnInstall.hidden = false;
   });
 
-  btnInstall.addEventListener("click", async () => {
+  btnInstall?.addEventListener("click", async () => {
     if (!state.installPromptEvent) return;
     state.installPromptEvent.prompt();
-    try {
-      await state.installPromptEvent.userChoice;
-    } catch (_) {}
+    try { await state.installPromptEvent.userChoice; } catch (_) {}
     state.installPromptEvent = null;
     btnInstall.hidden = true;
   });
@@ -49,21 +47,21 @@
   function setMode(next) {
     state.mode = next;
     const isSimple = next === "simple";
-    modeSimple.classList.toggle("is-active", isSimple);
-    modeNormal.classList.toggle("is-active", !isSimple);
-    modeSimple.setAttribute("aria-pressed", String(isSimple));
-    modeNormal.setAttribute("aria-pressed", String(!isSimple));
+    modeSimple?.classList.toggle("is-active", isSimple);
+    modeNormal?.classList.toggle("is-active", !isSimple);
+    modeSimple?.setAttribute("aria-pressed", String(isSimple));
+    modeNormal?.setAttribute("aria-pressed", String(!isSimple));
   }
 
-  modeSimple.addEventListener("click", () => setMode("simple"));
-  modeNormal.addEventListener("click", () => setMode("normal"));
+  modeSimple?.addEventListener("click", () => setMode("simple"));
+  modeNormal?.addEventListener("click", () => setMode("normal"));
 
   // --- Toggles / selects ---
   const toggleKogu = $("toggleKogu");
-  toggleKogu.addEventListener("change", () => (state.kogu = toggleKogu.checked));
+  toggleKogu?.addEventListener("change", () => (state.kogu = toggleKogu.checked));
 
-  $("tone").addEventListener("change", (e) => (state.tone = e.target.value));
-  $("itemType").addEventListener("change", (e) => (state.itemType = e.target.value));
+  $("tone")?.addEventListener("change", (e) => (state.tone = e.target.value));
+  $("itemType")?.addEventListener("change", (e) => (state.itemType = e.target.value));
 
   // --- Price formatting (v1.2.0) ---
   const priceMinRaw = $("priceMinRaw");
@@ -80,15 +78,9 @@
     return Number.isFinite(n) ? n : null;
   }
 
-  function roundDown500(n) {
-    return Math.floor(n / 500) * 500;
-  }
-  function roundUp500(n) {
-    return Math.ceil(n / 500) * 500;
-  }
-  function roundNearest500(n) {
-    return Math.round(n / 500) * 500;
-  }
+  function roundDown500(n) { return Math.floor(n / 500) * 500; }
+  function roundUp500(n) { return Math.ceil(n / 500) * 500; }
+  function roundNearest500(n) { return Math.round(n / 500) * 500; }
 
   function formatJPY(n) {
     if (n === null || n === undefined) return "—";
@@ -96,63 +88,56 @@
   }
 
   function updatePricePreview() {
-    const min = parseJPY(priceMinRaw.value);
-    const max = parseJPY(priceMaxRaw.value);
+    const min = parseJPY(priceMinRaw?.value);
+    const max = parseJPY(priceMaxRaw?.value);
 
-    let minR = null;
-    let maxR = null;
-    let avgR = null;
-
+    let minR = null, maxR = null, avgR = null;
     if (min !== null) minR = roundDown500(min);
     if (max !== null) maxR = roundUp500(max);
+    if (minR !== null && maxR !== null) avgR = roundNearest500((minR + maxR) / 2);
 
-    if (minR !== null && maxR !== null) {
-      const avg = (minR + maxR) / 2;
-      avgR = roundNearest500(avg);
-    }
-
-    priceMinRounded.textContent = formatJPY(minR);
-    priceMaxRounded.textContent = formatJPY(maxR);
-    priceAvg.textContent = formatJPY(avgR);
+    if (priceMinRounded) priceMinRounded.textContent = formatJPY(minR);
+    if (priceMaxRounded) priceMaxRounded.textContent = formatJPY(maxR);
+    if (priceAvg) priceAvg.textContent = formatJPY(avgR);
   }
 
-  [priceMinRaw, priceMaxRaw].forEach((el) => {
+  [priceMinRaw, priceMaxRaw].filter(Boolean).forEach((el) => {
     el.addEventListener("input", updatePricePreview);
     el.addEventListener("blur", updatePricePreview);
   });
-
   updatePricePreview();
 
   // --- Reset ---
-  $("btnReset").addEventListener("click", () => {
+  $("btnReset")?.addEventListener("click", () => {
     setMode("simple");
-    toggleKogu.checked = false;
+    if (toggleKogu) toggleKogu.checked = false;
     state.kogu = false;
 
-    $("tone").value = "neutral";
+    const toneEl = $("tone");
+    if (toneEl) toneEl.value = "neutral";
     state.tone = "neutral";
 
-    $("itemType").value = "auto";
+    const itemTypeEl = $("itemType");
+    if (itemTypeEl) itemTypeEl.value = "auto";
     state.itemType = "auto";
 
-    $("title").value = "";
-    $("keywords").value = "";
-    $("dims").value = "";
-    $("weight").value = "";
-    $("condition").value = "";
-    $("marks").value = "";
-    $("provenance").value = "";
-    $("constraints").value = "";
-    $("imageInfo").value = "";
+    ["title","keywords","dims","weight","condition","marks","provenance","constraints","imageInfo"].forEach((id)=> {
+      const el = $(id);
+      if (el) el.value = "";
+    });
 
-    priceMinRaw.value = "";
-    priceMaxRaw.value = "";
-    $("buyPrice").value = "";
+    if (priceMinRaw) priceMinRaw.value = "";
+    if (priceMaxRaw) priceMaxRaw.value = "";
+    $("buyPrice") && ($("buyPrice").value = "");
 
     updatePricePreview();
 
-    $("output").value = "";
+    const output = $("output");
+    if (output) output.value = "";
     setOutputButtonsEnabled(false);
+
+    // 画像関連もリセット
+    clearSelectedImage();
   });
 
   // --- Prompt generation ---
@@ -162,8 +147,8 @@
   const output = $("output");
 
   function setOutputButtonsEnabled(enabled) {
-    btnCopy.disabled = !enabled;
-    btnDownload.disabled = !enabled;
+    if (btnCopy) btnCopy.disabled = !enabled;
+    if (btnDownload) btnDownload.disabled = !enabled;
   }
 
   function mapItemType(v) {
@@ -191,9 +176,9 @@
   }
 
   function getRoundedPriceBlock() {
-    const min = parseJPY(priceMinRaw.value);
-    const max = parseJPY(priceMaxRaw.value);
-    const buy = parseJPY($("buyPrice").value);
+    const min = parseJPY(priceMinRaw?.value);
+    const max = parseJPY(priceMaxRaw?.value);
+    const buy = parseJPY($("buyPrice")?.value);
 
     const minR = min !== null ? roundDown500(min) : null;
     const maxR = max !== null ? roundUp500(max) : null;
@@ -247,15 +232,15 @@
   }
 
   function buildPrompt() {
-    const title = $("title").value.trim();
-    const keywords = $("keywords").value.trim();
-    const dims = $("dims").value.trim();
-    const weight = $("weight").value.trim();
-    const condition = $("condition").value.trim();
-    const marks = $("marks").value.trim();
-    const provenance = $("provenance").value.trim();
-    const constraints = $("constraints").value.trim();
-    const imageInfo = $("imageInfo").value.trim();
+    const title = $("title")?.value.trim() || "";
+    const keywords = $("keywords")?.value.trim() || "";
+    const dims = $("dims")?.value.trim() || "";
+    const weight = $("weight")?.value.trim() || "";
+    const condition = $("condition")?.value.trim() || "";
+    const marks = $("marks")?.value.trim() || "";
+    const provenance = $("provenance")?.value.trim() || "";
+    const constraints = $("constraints")?.value.trim() || "";
+    const imageInfo = $("imageInfo")?.value.trim() || "";
 
     const modeLabel = state.mode === "simple" ? "簡易鑑定" : "通常鑑定";
     const itemTypeLabel = mapItemType(state.itemType);
@@ -322,28 +307,29 @@
     return base.join("\n");
   }
 
-  btnGenerate.addEventListener("click", () => {
+  btnGenerate?.addEventListener("click", () => {
     const text = buildPrompt();
-    output.value = text;
+    if (output) output.value = text;
     setOutputButtonsEnabled(true);
   });
 
-  btnCopy.addEventListener("click", async () => {
-    const text = output.value || "";
+  btnCopy?.addEventListener("click", async () => {
+    const text = output?.value || "";
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
       btnCopy.textContent = "コピー済み";
       setTimeout(() => (btnCopy.textContent = "コピー"), 900);
     } catch (_) {
+      if (!output) return;
       output.focus();
       output.select();
       document.execCommand("copy");
     }
   });
 
-  btnDownload.addEventListener("click", () => {
-    const text = output.value || "";
+  btnDownload?.addEventListener("click", () => {
+    const text = output?.value || "";
     if (!text) return;
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -356,27 +342,24 @@
     a.remove();
     URL.revokeObjectURL(url);
   });
-})();
 
-// ===== Gemini Share / Image Preview (single block - final) =====
-(function () {
+  // ===== Gemini Share / Image Preview (camera + gallery) =====
   const outputEl = document.querySelector("textarea#output");
-  const imgInput = document.getElementById("imgInput");
+  const imgInputCamera = document.getElementById("imgInputCamera");
+  const imgInputGallery = document.getElementById("imgInputGallery");
   const imgPreview = document.getElementById("imgPreview");
   const toastEl = document.getElementById("toast");
 
-  const btnPickImage = document.getElementById("btnPickImage");
+  const btnCamera = document.getElementById("btnCamera");
+  const btnGallery = document.getElementById("btnGallery");
   const btnGemini = document.getElementById("btnGemini");
   const btnGeminiImg = document.getElementById("btnGeminiImg");
 
-  // どれかが無い場合は静かに無効化
-  if (!outputEl || !imgInput || !toastEl || !btnPickImage || !btnGemini || !btnGeminiImg) return;
-
   let selectedFile = null;
-  let previewUrl = null;
   let toastTimer = null;
 
   function toast(msg, ms = 1400) {
+    if (!toastEl) return;
     toastEl.textContent = msg;
     toastEl.style.display = "block";
     clearTimeout(toastTimer);
@@ -384,7 +367,7 @@
   }
 
   function getPromptText() {
-    return (outputEl.value || "").trim();
+    return (outputEl?.value || "").trim();
   }
 
   async function copyToClipboard(text) {
@@ -392,6 +375,7 @@
       await navigator.clipboard.writeText(text);
       return true;
     }
+    if (!outputEl) throw new Error("output not found");
     outputEl.focus();
     outputEl.select();
     const ok = document.execCommand("copy");
@@ -425,27 +409,35 @@
   }
 
   function updateImageButtons() {
-    btnGeminiImg.disabled = !selectedFile;
+    if (btnGeminiImg) btnGeminiImg.disabled = !selectedFile;
   }
 
   function setBusy(isBusy) {
-    btnPickImage.disabled = isBusy;
-    btnGemini.disabled = isBusy;
-    btnGeminiImg.disabled = isBusy || !selectedFile;
+    if (btnCamera) btnCamera.disabled = isBusy;
+    if (btnGallery) btnGallery.disabled = isBusy;
+    if (btnGemini) btnGemini.disabled = isBusy;
+    if (btnGeminiImg) btnGeminiImg.disabled = isBusy || !selectedFile;
   }
 
-  function revokePreviewUrlIfAny() {
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-      previewUrl = null;
+  function applySelectedFile(file) {
+    selectedFile = file;
+
+    if (imgPreview) {
+      if (!selectedFile) {
+        imgPreview.style.display = "none";
+        imgPreview.src = "";
+      } else {
+        imgPreview.src = URL.createObjectURL(selectedFile);
+        imgPreview.style.display = "block";
+      }
     }
+    updateImageButtons();
   }
 
   function clearSelectedImage() {
     selectedFile = null;
-    imgInput.value = "";
-    revokePreviewUrlIfAny();
-
+    if (imgInputCamera) imgInputCamera.value = "";
+    if (imgInputGallery) imgInputGallery.value = "";
     if (imgPreview) {
       imgPreview.src = "";
       imgPreview.style.display = "none";
@@ -453,32 +445,32 @@
     updateImageButtons();
   }
 
-  // 画像選択
-  btnPickImage.addEventListener("click", () => imgInput.click());
-
-  imgInput.addEventListener("change", () => {
-    const f = imgInput.files?.[0] || null;
-    selectedFile = f;
-
-    if (imgPreview) {
-      revokePreviewUrlIfAny();
-
-      if (!selectedFile) {
-        imgPreview.style.display = "none";
-        imgPreview.src = "";
-      } else {
-        previewUrl = URL.createObjectURL(selectedFile);
-        imgPreview.src = previewUrl;
-        imgPreview.style.display = "block";
-      }
+  function openPicker(inputEl) {
+    if (!inputEl) return;
+    try {
+      if (inputEl.showPicker) inputEl.showPicker();
+      else inputEl.click();
+    } catch {
+      toast("画像ピッカーを開けませんでした");
     }
+  }
 
-    updateImageButtons();
-    if (selectedFile) toast("画像を選択しました");
+  btnCamera?.addEventListener("click", () => openPicker(imgInputCamera));
+  btnGallery?.addEventListener("click", () => openPicker(imgInputGallery));
+
+  imgInputCamera?.addEventListener("change", () => {
+    const f = imgInputCamera.files?.[0] || null;
+    applySelectedFile(f);
+    if (f) toast("カメラ画像を選択しました");
   });
 
-  // Geminiへ（テキスト）
-  btnGemini.addEventListener("click", async () => {
+  imgInputGallery?.addEventListener("change", () => {
+    const f = imgInputGallery.files?.[0] || null;
+    applySelectedFile(f);
+    if (f) toast("ギャラリー画像を選択しました");
+  });
+
+  btnGemini?.addEventListener("click", async () => {
     const text = getPromptText();
     if (!text) return toast("出力が空です");
 
@@ -502,8 +494,7 @@
     }
   });
 
-  // 画像＋Gemini
-  btnGeminiImg.addEventListener("click", async () => {
+  btnGeminiImg?.addEventListener("click", async () => {
     const text = getPromptText();
     if (!selectedFile) return toast("画像が未選択です");
     if (!text) return toast("プロンプトが空です");
@@ -528,9 +519,7 @@
         const ok2 = await shareImageOnly(selectedFile);
         if (ok2) {
           clearSelectedImage();
-          alert(
-            "この端末では「画像＋テキスト」の同時共有が不安定です。\nGemini側でプロンプトを貼り付けてください（コピー済み）。"
-          );
+          alert("この端末では「画像＋テキスト」の同時共有が不安定です。\nGemini側でプロンプトを貼り付けてください（コピー済み）。");
           return;
         }
 
