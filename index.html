@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0b0f14" />
+  <meta name="description" content="古物鑑定プロンプト生成（簡易/通常・古家具特則ON/OFF・PWA）" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="./style.css" />
+  <title>古物鑑定プロンプト生成</title>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">鑑</div>
+      <div class="brand-text">
+        <div class="title">古物鑑定プロンプト生成</div>
+        <div class="subtitle">鑑定ロジックなし／プロンプトのみ生成（Cloudflare Pages / PWA）</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="btnInstall" class="btn btn-ghost" type="button" hidden>インストール</button>
+      <button id="btnReset" class="btn btn-ghost" type="button">リセット</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h2>設定</h2>
+
+      <div class="grid">
+        <div class="field">
+          <label>モード</label>
+          <div class="segmented" role="tablist" aria-label="鑑定モード">
+            <button id="modeSimple" class="seg-btn is-active" type="button" aria-pressed="true">簡易鑑定</button>
+            <button id="modeNormal" class="seg-btn" type="button" aria-pressed="false">通常鑑定</button>
+          </div>
+          <p class="hint">簡易＝最低限の判断材料で短く／通常＝深掘り質問・根拠・相場レンジを厚めに</p>
+        </div>
+
+        <div class="field">
+          <label>古家具特則</label>
+          <div class="toggle-row">
+            <label class="switch">
+              <input id="toggleKogu" type="checkbox" />
+              <span class="slider" aria-hidden="true"></span>
+            </label>
+            <div>
+              <div class="toggle-title">ON / OFF</div>
+              <div class="hint">家具・木工・塗装・金物・構造・搬送・サイズ注意などの特則を追加</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>出力の口調</label>
+          <select id="tone">
+            <option value="neutral" selected>ニュートラル（実務）</option>
+            <option value="buyer">仕入れ目線（リスク強め）</option>
+            <option value="seller">販売目線（魅力強め）</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>鑑定対象の種類</label>
+          <select id="itemType">
+            <option value="auto" selected>自動（入力から推定してOK）</option>
+            <option value="furniture">家具（棚/机/椅子など）</option>
+            <option value="tools">道具/民具</option>
+            <option value="ceramics">陶磁器/ガラス</option>
+            <option value="metal">金属/真鍮/鉄物</option>
+            <option value="art">絵画/版画/工芸</option>
+            <option value="toy">玩具/ホビー</option>
+            <option value="brand">ブランド/服飾/小物</option>
+            <option value="other">その他</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>入力（案件情報）</h2>
+
+      <div class="grid">
+        <div class="field">
+          <label for="title">案件名 / 商品名（わかる範囲）</label>
+          <input id="title" type="text" placeholder="例：古い木製の引き出し付き作業台 / 不明（仮）" />
+        </div>
+
+        <div class="field">
+          <label for="keywords">キーワード（特徴・材質・印・産地など）</label>
+          <input id="keywords" type="text" placeholder="例：無垢材/蟻組/真鍮金具/刻印あり/昭和/店舗什器" />
+        </div>
+
+        <div class="field">
+          <label for="dims">サイズ（mm / cm など）</label>
+          <input id="dims" type="text" placeholder="例：W1200×D450×H750mm / 不明" />
+        </div>
+
+        <div class="field">
+          <label for="weight">重量（任意）</label>
+          <input id="weight" type="text" placeholder="例：およそ25kg / 不明" />
+        </div>
+
+        <div class="field">
+          <label for="condition">状態（傷・欠け・ガタつき・動作など）</label>
+          <textarea id="condition" rows="4" placeholder="例：天板に擦れ・小欠け、引き出し開閉OK、脚にガタつき少し"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="marks">刻印 / サイン / ラベル / 仕様（任意）</label>
+          <textarea id="marks" rows="4" placeholder="例：裏面に焼印、金具に刻印、ブランドラベル、シリアル等"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="provenance">入手経路・来歴（任意）</label>
+          <textarea id="provenance" rows="3" placeholder="例：倉庫整理で譲受、店舗で使用されていた等"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="constraints">制約（販売先・地域・発送可否・修理方針）</label>
+          <textarea id="constraints" rows="3" placeholder="例：大型発送は要検討、東京都内引取優先、修理は最小限、現状渡しも可"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="imageInfo">画像情報（任意：枚数/内容メモ）</label>
+          <input id="imageInfo" type="text" placeholder="例：全体4枚/刻印1枚/欠け1枚（今回の画像のみ使用）" />
+          <p class="hint">アプリは画像を解析しません。プロンプトに「今回の画像のみ」を強制挿入します。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>価格（v1.2.0 準拠：500円単位・平均併記）</h2>
+
+      <div class="grid">
+        <div class="field">
+          <label for="priceMinRaw">想定レンジ（下限・入力任意）</label>
+          <input id="priceMinRaw" inputmode="numeric" type="text" placeholder="例：12800" />
+          <p class="hint">入力すると自動で500円単位に丸めます（下限＝切り下げ）。</p>
+        </div>
+
+        <div class="field">
+          <label for="priceMaxRaw">想定レンジ（上限・入力任意）</label>
+          <input id="priceMaxRaw" inputmode="numeric" type="text" placeholder="例：17800" />
+          <p class="hint">入力すると自動で500円単位に丸めます（上限＝切り上げ）。</p>
+        </div>
+
+        <div class="field">
+          <label>丸め後（表示）</label>
+          <div class="pricePreview">
+            <div class="pill"><span class="k">下限</span><span id="priceMinRounded" class="v">—</span></div>
+            <div class="pill"><span class="k">上限</span><span id="priceMaxRounded" class="v">—</span></div>
+            <div class="pill"><span class="k">平均</span><span id="priceAvg" class="v">—</span></div>
+          </div>
+          <p class="hint">平均＝(下限+上限)/2 を500円単位に丸め（四捨五入）</p>
+        </div>
+
+        <div class="field">
+          <label for="buyPrice">仕入れ価格（任意）</label>
+          <input id="buyPrice" inputmode="numeric" type="text" placeholder="例：5000" />
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>生成</h2>
+
+      <div class="genRow">
+        <button id="btnGenerate" class="btn btn-primary" type="button">プロンプト生成</button>
+        <button id="btnCopy" class="btn" type="button" disabled>コピー</button>
+        <button id="btnDownload" class="btn" type="button" disabled>TXT保存</button>
+      </div>
+
+      <div class="field">
+        <label for="output">出力プロンプト</label>
+        <textarea id="output" rows="18" readonly placeholder="ここにプロンプトが生成されます"></textarea>
+        <div class="hint">
+          強制挿入：<b>新規案件</b>／<b>今回の画像のみ</b>／<b>過去参照禁止</b>
+          （※ユーザーが消しても再生成で必ず入ります）
+        </div>
+      </div>
+
+      <details class="details">
+        <summary>このPWAの方針（重要）</summary>
+        <ul>
+          <li>鑑定ロジックは持たず、モデルへ渡す「指示文（プロンプト）」だけを生成します。</li>
+          <li>毎回「新規案件」「今回の画像のみ」「過去参照禁止」を強制で含めます。</li>
+          <li>価格表記は v1.2.0 として「500円単位」「平均併記」を必須にします。</li>
+          <li>Cloudflare Pages でそのまま配信できる静的ファイル構成です。</li>
+        </ul>
+      </details>
+    </section>
+
+    <footer class="footer">
+      <div>© Prompt Generator (No appraisal logic) / Offline-ready PWA</div>
+      <div class="muted">Cloudflare Pages: ルートにそのまま配置してOK</div>
+    </footer>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
