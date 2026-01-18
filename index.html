@@ -178,7 +178,15 @@
         <label for="output">出力プロンプト</label>
         <textarea id="output" rows="18" readonly placeholder="ここにプロンプトが生成されます"></textarea>
 
-        <img id="imgPreview" alt="選択した画像のプレビュー" style="max-width:100%; display:none; border-radius:12px; margin-top:10px;">
+        <!-- 複数画像プレビュー -->
+        <div id="imgPreviewWrap" class="img-preview-wrap" style="display:none;">
+          <div class="img-preview-head">
+            <div class="img-preview-title">選択中の画像</div>
+            <button id="btnClearImages" class="btn btn-ghost img-clear" type="button">クリア</button>
+          </div>
+          <div id="imgPreviewList" class="img-preview-list"></div>
+          <div class="hint">※ 画像はこのPWAでは解析しません。Geminiへ共有するために保持しています。</div>
+        </div>
 
         <div class="hint">
           強制挿入：<b>新規案件</b>／<b>今回の画像のみ</b>／<b>過去参照禁止</b>
@@ -203,16 +211,16 @@
     </footer>
   </main>
 
-  <!-- ▼ 画像入力：カメラ用（captureあり） -->
-  <input id="imgInputCamera" type="file" accept="image/*" capture="environment" class="file-hidden" />
+  <!-- 画像入力：カメラ（複数） -->
+  <input id="imgInputCamera" type="file" accept="image/*" capture="environment" multiple class="file-hidden" />
 
-  <!-- ▼ 画像入力：ギャラリー用（captureなし） -->
-  <input id="imgInputGallery" type="file" accept="image/*" class="file-hidden" />
+  <!-- 画像入力：ギャラリー（複数） -->
+  <input id="imgInputGallery" type="file" accept="image/*" multiple class="file-hidden" />
 
-  <!-- ▼ トースト -->
+  <!-- トースト -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <!-- ▼ 下固定バー -->
+  <!-- 下固定バー -->
   <div id="bottomBar" class="bottom-bar">
     <button id="btnCamera" class="btn btn-secondary" type="button">カメラ</button>
     <button id="btnGallery" class="btn btn-secondary" type="button">ギャラリー</button>
