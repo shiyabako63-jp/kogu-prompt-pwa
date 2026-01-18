@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="./style.css" />
   <title>古物鑑定プロンプト生成</title>
 </head>
+
 <body>
   <header class="topbar">
     <div class="brand">
@@ -176,6 +177,13 @@
       <div class="field">
         <label for="output">出力プロンプト</label>
         <textarea id="output" rows="18" readonly placeholder="ここにプロンプトが生成されます"></textarea>
+
+        <img
+          id="imgPreview"
+          alt="選択した画像のプレビュー"
+          style="max-width:100%; display:none; border-radius:12px; margin-top:10px;"
+        >
+
         <div class="hint">
           強制挿入：<b>新規案件</b>／<b>今回の画像のみ</b>／<b>過去参照禁止</b>
           （※ユーザーが消しても再生成で必ず入ります）
@@ -199,6 +207,25 @@
     </footer>
   </main>
 
+  <!-- ▼ Gemini共有UI（1セットだけ） -->
+  <input
+    id="imgInput"
+    type="file"
+    accept="image/*"
+    capture="environment"
+    style="display:none"
+  />
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<div id="bottomBar" class="bottom-bar">
+  <button id="btnPickImage" class="btn btn-secondary" type="button">画像</button>
+  <button id="btnGemini" class="btn btn-primary" type="button">Geminiへ</button>
+  <button id="btnGeminiImg" class="btn btn-primary" type="button" disabled>画像＋Gemini</button>
+</div>
+  <!-- ▲ ここまで -->
+
+  <!-- JSは一回だけ。パスは ./app.js に統一 -->
   <script src="./app.js"></script>
 </body>
 </html>

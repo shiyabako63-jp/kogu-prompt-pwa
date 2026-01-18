@@ -212,7 +212,6 @@
   }
 
   function forcedHeader() {
-    // ここはユーザーが何を入れても必ず入る「強制挿入」ブロック
     return [
       "【強制条件（必ず遵守）】",
       "1) 新規案件：今回の案件のみを扱う（継続案件として扱わない）",
@@ -273,7 +272,6 @@
 
     base.push(priceRulesV120());
 
-    // Mode-specific guidance
     if (state.mode === "simple") {
       base.push("【出力要件（簡易鑑定）】");
       base.push("- まず結論（カテゴリ推定 / 要注意点 / 次の確認3つ）→ 根拠 → 価格レンジ → 出品方針の順。");
@@ -289,10 +287,8 @@
       base.push("");
     }
 
-    // Optional special rules
     if (state.kogu) base.push(koguSpecialRules());
 
-    // Input block
     base.push("【案件入力（ユーザー提供）】");
     base.push(`- 案件名/商品名: ${title || "（未入力）"}`);
     base.push(`- キーワード: ${keywords || "（未入力）"}`);
@@ -305,11 +301,9 @@
     base.push(`- 画像情報メモ: ${imageInfo || "（未入力）"}`);
     base.push("");
 
-    // Inject app-side rounded prices if provided
     const priceBlock = getRoundedPriceBlock();
     if (priceBlock) base.push(priceBlock);
 
-    // Output format request
     base.push("【必須アウトプット形式】");
     base.push("以下の見出しをこの順で出力：");
     base.push("1) 結論（要約）");
@@ -342,7 +336,6 @@
       btnCopy.textContent = "コピー済み";
       setTimeout(() => (btnCopy.textContent = "コピー"), 900);
     } catch (_) {
-      // fallback
       output.focus();
       output.select();
       document.execCommand("copy");
@@ -363,4 +356,193 @@
     a.remove();
     URL.revokeObjectURL(url);
   });
+})();
+
+// ===== Gemini Share / Image Preview (single block - final) =====
+(function () {
+  const outputEl = document.querySelector("textarea#output");
+  const imgInput = document.getElementById("imgInput");
+  const imgPreview = document.getElementById("imgPreview");
+  const toastEl = document.getElementById("toast");
+
+  const btnPickImage = document.getElementById("btnPickImage");
+  const btnGemini = document.getElementById("btnGemini");
+  const btnGeminiImg = document.getElementById("btnGeminiImg");
+
+  // どれかが無い場合は静かに無効化
+  if (!outputEl || !imgInput || !toastEl || !btnPickImage || !btnGemini || !btnGeminiImg) return;
+
+  let selectedFile = null;
+  let previewUrl = null;
+  let toastTimer = null;
+
+  function toast(msg, ms = 1400) {
+    toastEl.textContent = msg;
+    toastEl.style.display = "block";
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (toastEl.style.display = "none"), ms);
+  }
+
+  function getPromptText() {
+    return (outputEl.value || "").trim();
+  }
+
+  async function copyToClipboard(text) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    outputEl.focus();
+    outputEl.select();
+    const ok = document.execCommand("copy");
+    window.getSelection?.().removeAllRanges?.();
+    if (!ok) throw new Error("copy failed");
+    return true;
+  }
+
+  async function shareText(text) {
+    if (!navigator.share) return false;
+    await navigator.share({ text, title: "Prompt" });
+    return true;
+  }
+
+  async function shareImageAndText(file, text) {
+    if (!navigator.share) return false;
+    if (navigator.canShare && !navigator.canShare({ files: [file] })) return false;
+    await navigator.share({ files: [file], text, title: "Image + Prompt" });
+    return true;
+  }
+
+  async function shareImageOnly(file) {
+    if (!navigator.share) return false;
+    if (navigator.canShare && !navigator.canShare({ files: [file] })) return false;
+    await navigator.share({ files: [file], title: "Image" });
+    return true;
+  }
+
+  function openGeminiWeb() {
+    window.open("https://gemini.google.com/", "_blank", "noopener");
+  }
+
+  function updateImageButtons() {
+    btnGeminiImg.disabled = !selectedFile;
+  }
+
+  function setBusy(isBusy) {
+    btnPickImage.disabled = isBusy;
+    btnGemini.disabled = isBusy;
+    btnGeminiImg.disabled = isBusy || !selectedFile;
+  }
+
+  function revokePreviewUrlIfAny() {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      previewUrl = null;
+    }
+  }
+
+  function clearSelectedImage() {
+    selectedFile = null;
+    imgInput.value = "";
+    revokePreviewUrlIfAny();
+
+    if (imgPreview) {
+      imgPreview.src = "";
+      imgPreview.style.display = "none";
+    }
+    updateImageButtons();
+  }
+
+  // 画像選択
+  btnPickImage.addEventListener("click", () => imgInput.click());
+
+  imgInput.addEventListener("change", () => {
+    const f = imgInput.files?.[0] || null;
+    selectedFile = f;
+
+    if (imgPreview) {
+      revokePreviewUrlIfAny();
+
+      if (!selectedFile) {
+        imgPreview.style.display = "none";
+        imgPreview.src = "";
+      } else {
+        previewUrl = URL.createObjectURL(selectedFile);
+        imgPreview.src = previewUrl;
+        imgPreview.style.display = "block";
+      }
+    }
+
+    updateImageButtons();
+    if (selectedFile) toast("画像を選択しました");
+  });
+
+  // Geminiへ（テキスト）
+  btnGemini.addEventListener("click", async () => {
+    const text = getPromptText();
+    if (!text) return toast("出力が空です");
+
+    setBusy(true);
+    try {
+      try {
+        await copyToClipboard(text);
+        toast("コピーしました（共有を開きます）");
+      } catch {
+        toast("コピーできませんでした（共有を試します）");
+      }
+
+      try {
+        const ok = await shareText(text);
+        if (!ok) openGeminiWeb();
+      } catch {
+        openGeminiWeb();
+      }
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  // 画像＋Gemini
+  btnGeminiImg.addEventListener("click", async () => {
+    const text = getPromptText();
+    if (!selectedFile) return toast("画像が未選択です");
+    if (!text) return toast("プロンプトが空です");
+
+    setBusy(true);
+    try {
+      try {
+        await copyToClipboard(text);
+        toast("コピーしました（画像＋共有を開きます）");
+      } catch {
+        toast("コピーできませんでした（画像共有を試します）");
+      }
+
+      try {
+        const ok = await shareImageAndText(selectedFile, text);
+        if (ok) {
+          clearSelectedImage();
+          toast("共有しました（画像をクリア）");
+          return;
+        }
+
+        const ok2 = await shareImageOnly(selectedFile);
+        if (ok2) {
+          clearSelectedImage();
+          alert(
+            "この端末では「画像＋テキスト」の同時共有が不安定です。\nGemini側でプロンプトを貼り付けてください（コピー済み）。"
+          );
+          return;
+        }
+
+        openGeminiWeb();
+      } catch {
+        openGeminiWeb();
+      }
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  // 初期状態
+  updateImageButtons();
 })();
