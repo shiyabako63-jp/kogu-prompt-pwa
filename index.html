@@ -4,230 +4,170 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#0b0f14" />
-  <meta name="description" content="古物鑑定プロンプト生成（簡易/通常・古家具特則ON/OFF・PWA）" />
+  <meta name="description" content="古物鑑定（簡易/通常）PWA" />
   <link rel="manifest" href="/manifest.json" />
-  <link rel="stylesheet" href="./style.css" />
-  <title>古物鑑定プロンプト生成</title>
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+  <link rel="stylesheet" href="/style.css" />
+  <title>古物鑑定 PWA</title>
 </head>
-
 <body>
   <header class="topbar">
     <div class="brand">
       <div class="logo" aria-hidden="true">鑑</div>
-      <div class="brand-text">
-        <div class="title">古物鑑定プロンプト生成</div>
-        <div class="subtitle">鑑定ロジックなし／プロンプトのみ生成（Cloudflare Pages / PWA）</div>
+      <div class="brandText">
+        <div class="brandTitle">古物鑑定</div>
+        <div class="brandSub">画像→モード→（通常のみ入力）→鑑定</div>
       </div>
     </div>
-
-    <div class="actions">
-      <button id="btnInstall" class="btn btn-ghost" type="button" hidden>インストール</button>
-      <button id="btnReset" class="btn btn-ghost" type="button">リセット</button>
-    </div>
+    <button id="btnReset" class="btn btn-ghost" type="button" title="最初から">リセット</button>
   </header>
 
-  <main class="container">
-    <section class="card">
-      <h2>設定</h2>
+  <main class="wrap">
+    <!-- A: 画像取得 -->
+    <section class="card" id="cardPick">
+      <h2>1) 画像を用意</h2>
+      <p class="muted">最初はここだけ。撮るか選ぶだけでOK。</p>
 
-      <div class="grid">
-        <div class="field">
-          <label>モード</label>
-          <div class="segmented" role="tablist" aria-label="鑑定モード">
-            <button id="modeSimple" class="seg-btn is-active" type="button" aria-pressed="true">簡易鑑定</button>
-            <button id="modeNormal" class="seg-btn" type="button" aria-pressed="false">通常鑑定</button>
-          </div>
-          <p class="hint">簡易＝最低限の判断材料で短く／通常＝深掘り質問・根拠・相場レンジを厚めに</p>
-        </div>
+      <div class="row">
+        <button id="btnCamera" class="btn btn-primary" type="button">カメラで撮る</button>
+        <button id="btnGallery" class="btn" type="button">画像フォルダ</button>
 
-        <div class="field">
-          <label>古家具特則</label>
-          <div class="toggle-row">
-            <label class="switch">
-              <input id="toggleKogu" type="checkbox" />
-              <span class="slider" aria-hidden="true"></span>
-            </label>
-            <div>
-              <div class="toggle-title">ON / OFF</div>
-              <div class="hint">家具・木工・塗装・金物・構造・搬送・サイズ注意などの特則を追加</div>
-            </div>
-          </div>
-        </div>
+        <!-- 実際の input は隠してボタンで起動 -->
+        <input id="fileCamera" class="hidden" type="file" accept="image/*" capture="environment" multiple />
+        <input id="fileGallery" class="hidden" type="file" accept="image/*" multiple />
+      </div>
 
-        <div class="field">
-          <label>出力の口調</label>
-          <select id="tone">
-            <option value="neutral" selected>ニュートラル（実務）</option>
-            <option value="buyer">仕入れ目線（リスク強め）</option>
-            <option value="seller">販売目線（魅力強め）</option>
-          </select>
-        </div>
+      <div id="pickHint" class="hint">
+        複数枚OK。結果は画像ごとに出します（画像同士の関連推測を避けるため）。
+      </div>
 
-        <div class="field">
-          <label>鑑定対象の種類</label>
-          <select id="itemType">
-            <option value="auto" selected>自動（入力から推定してOK）</option>
-            <option value="furniture">家具（棚/机/椅子など）</option>
-            <option value="tools">道具/民具</option>
-            <option value="ceramics">陶磁器/ガラス</option>
-            <option value="metal">金属/真鍮/鉄物</option>
-            <option value="art">絵画/版画/工芸</option>
-            <option value="toy">玩具/ホビー</option>
-            <option value="brand">ブランド/服飾/小物</option>
-            <option value="other">その他</option>
-          </select>
-        </div>
+      <div id="thumbs" class="thumbs" aria-label="選択した画像一覧"></div>
+
+      <div class="row row-right">
+        <button id="btnClearImages" class="btn btn-ghost" type="button" disabled>画像を消す</button>
       </div>
     </section>
 
-    <section class="card">
-      <h2>入力（案件情報）</h2>
+    <!-- B: モード選択（画像が入ったら出る） -->
+    <section class="card hidden" id="cardMode">
+      <h2>2) モードを選択</h2>
+      <p class="muted">簡易は即鑑定。通常は追加情報を入力できます。</p>
 
-      <div class="grid">
-        <div class="field">
-          <label for="title">案件名 / 商品名（わかる範囲）</label>
-          <input id="title" type="text" placeholder="例：古い木製の引き出し付き作業台 / 不明（仮）" />
-        </div>
-
-        <div class="field">
-          <label for="keywords">キーワード（特徴・材質・印・産地など）</label>
-          <input id="keywords" type="text" placeholder="例：無垢材/蟻組/真鍮金具/刻印あり/昭和/店舗什器" />
-        </div>
-
-        <div class="field">
-          <label for="dims">サイズ（mm / cm など）</label>
-          <input id="dims" type="text" placeholder="例：W1200×D450×H750mm / 不明" />
-        </div>
-
-        <div class="field">
-          <label for="weight">重量（任意）</label>
-          <input id="weight" type="text" placeholder="例：およそ25kg / 不明" />
-        </div>
-
-        <div class="field">
-          <label for="condition">状態（傷・欠け・ガタつき・動作など）</label>
-          <textarea id="condition" rows="4" placeholder="例：天板に擦れ・小欠け、引き出し開閉OK、脚にガタつき少し"></textarea>
-        </div>
-
-        <div class="field">
-          <label for="marks">刻印 / サイン / ラベル / 仕様（任意）</label>
-          <textarea id="marks" rows="4" placeholder="例：裏面に焼印、金具に刻印、ブランドラベル、シリアル等"></textarea>
-        </div>
-
-        <div class="field">
-          <label for="provenance">入手経路・来歴（任意）</label>
-          <textarea id="provenance" rows="3" placeholder="例：倉庫整理で譲受、店舗で使用されていた等"></textarea>
-        </div>
-
-        <div class="field">
-          <label for="constraints">制約（販売先・地域・発送可否・修理方針）</label>
-          <textarea id="constraints" rows="3" placeholder="例：大型発送は要検討、東京都内引取優先、修理は最小限、現状渡しも可"></textarea>
-        </div>
-
-        <div class="field">
-          <label for="imageInfo">画像情報（任意：枚数/内容メモ）</label>
-          <input id="imageInfo" type="text" placeholder="例：全体4枚/刻印1枚/欠け1枚（今回の画像のみ使用）" />
-          <p class="hint">アプリは画像を解析しません。プロンプトに「今回の画像のみ」を強制挿入します。</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>価格（v1.2.0 準拠：500円単位・平均併記）</h2>
-
-      <div class="grid">
-        <div class="field">
-          <label for="priceMinRaw">想定レンジ（下限・入力任意）</label>
-          <input id="priceMinRaw" inputmode="numeric" type="text" placeholder="例：12800" />
-          <p class="hint">入力すると自動で500円単位に丸めます（下限＝切り下げ）。</p>
-        </div>
-
-        <div class="field">
-          <label for="priceMaxRaw">想定レンジ（上限・入力任意）</label>
-          <input id="priceMaxRaw" inputmode="numeric" type="text" placeholder="例：17800" />
-          <p class="hint">入力すると自動で500円単位に丸めます（上限＝切り上げ）。</p>
-        </div>
-
-        <div class="field">
-          <label>丸め後（表示）</label>
-          <div class="pricePreview">
-            <div class="pill"><span class="k">下限</span><span id="priceMinRounded" class="v">—</span></div>
-            <div class="pill"><span class="k">上限</span><span id="priceMaxRounded" class="v">—</span></div>
-            <div class="pill"><span class="k">平均</span><span id="priceAvg" class="v">—</span></div>
-          </div>
-          <p class="hint">平均＝(下限+上限)/2 を500円単位に丸め（四捨五入）</p>
-        </div>
-
-        <div class="field">
-          <label for="buyPrice">仕入れ価格（任意）</label>
-          <input id="buyPrice" inputmode="numeric" type="text" placeholder="例：5000" />
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>生成</h2>
-
-      <div class="genRow">
-        <button id="btnGenerate" class="btn btn-primary" type="button">プロンプト生成</button>
-        <button id="btnCopy" class="btn" type="button" disabled>コピー</button>
-        <button id="btnDownload" class="btn" type="button" disabled>TXT保存</button>
+      <div class="row">
+        <button id="btnSimple" class="btn btn-primary" type="button">簡易鑑定（すぐ実行）</button>
+        <button id="btnNormal" class="btn" type="button">通常鑑定（入力あり）</button>
       </div>
 
-      <div class="field">
-        <label for="output">出力プロンプト</label>
-        <textarea id="output" rows="18" readonly placeholder="ここにプロンプトが生成されます"></textarea>
-
-        <!-- 複数画像プレビュー -->
-        <div id="imgPreviewWrap" class="img-preview-wrap" style="display:none;">
-          <div class="img-preview-head">
-            <div class="img-preview-title">選択中の画像</div>
-            <button id="btnClearImages" class="btn btn-ghost img-clear" type="button">クリア</button>
-          </div>
-          <div id="imgPreviewList" class="img-preview-list"></div>
-          <div class="hint">※ 画像はこのPWAでは解析しません。Geminiへ共有するために保持しています。</div>
-        </div>
-
-        <div class="hint">
-          強制挿入：<b>新規案件</b>／<b>今回の画像のみ</b>／<b>過去参照禁止</b>
-          （※ユーザーが消しても再生成で必ず入ります）
-        </div>
-      </div>
+      <div class="divider"></div>
 
       <details class="details">
-        <summary>このPWAの方針（重要）</summary>
-        <ul>
-          <li>鑑定ロジックは持たず、モデルへ渡す「指示文（プロンプト）」だけを生成します。</li>
-          <li>毎回「新規案件」「今回の画像のみ」「過去参照禁止」を強制で含めます。</li>
-          <li>価格表記は v1.2.0 として「500円単位」「平均併記」を必須にします。</li>
-          <li>Cloudflare Pages でそのまま配信できる静的ファイル構成です。</li>
-        </ul>
+        <summary>ヒント（運用）</summary>
+        <div class="detailsBody">
+          <ul class="list">
+            <li>「通常鑑定」は誤認防止向け。刻印・サイズ・動作などがあると精度が上がります。</li>
+            <li>画像は自動圧縮して送ります（通信と失敗率対策）。</li>
+          </ul>
+        </div>
       </details>
     </section>
 
+    <!-- C: 通常鑑定の追加情報（通常選択時のみ表示） -->
+    <section class="card hidden" id="cardNormal">
+      <h2>3) 追加情報（通常鑑定のみ）</h2>
+      <p class="muted">分かる範囲でOK。空欄でも進めます。</p>
+
+      <div class="grid">
+        <div class="field">
+          <label for="fSize">サイズ（任意）</label>
+          <input id="fSize" type="text" placeholder="例：縦20cm×横15cm×高さ10cm / 直径 / 重さ など" />
+        </div>
+
+        <div class="field">
+          <label for="fMark">刻印・型番・サイン（任意）</label>
+          <input id="fMark" type="text" placeholder="例：型番 / 裏刻印 / サイン / ラベルの文字" />
+        </div>
+
+        <div class="field">
+          <label for="fPower">動作・通電（任意）</label>
+          <select id="fPower">
+            <option value="">未選択</option>
+            <option value="OK">OK</option>
+            <option value="NG">NG</option>
+            <option value="未確認">未確認</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="fAccessory">付属品（任意）</label>
+          <input id="fAccessory" type="text" placeholder="例：箱・説明書・ケーブル・付属パーツ" />
+        </div>
+
+        <div class="field full">
+          <label for="fCondition">状態メモ（任意）</label>
+          <textarea id="fCondition" rows="4" placeholder="例：傷/欠け/汚れ/臭い/ガタつき/割れ/歪み など"></textarea>
+        </div>
+
+        <div class="field full">
+          <label for="fNote">補足（任意）</label>
+          <textarea id="fNote" rows="3" placeholder="例：入手経路、素材、分かること、気になる点"></textarea>
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="btnRunNormal" class="btn btn-primary" type="button">鑑定開始（通常鑑定）</button>
+        <button id="btnBackToMode" class="btn btn-ghost" type="button">モード選択へ戻る</button>
+      </div>
+    </section>
+
+    <!-- 実行中 -->
+    <section class="card hidden" id="cardProgress" aria-live="polite">
+      <h2>鑑定中</h2>
+      <div class="progress">
+        <div class="spinner" aria-hidden="true"></div>
+        <div>
+          <div id="progressTitle" class="progressTitle">送信しています…</div>
+          <div id="progressSub" class="muted">画像サイズにより少し時間がかかることがあります。</div>
+        </div>
+      </div>
+      <div class="row row-right">
+        <button id="btnCancel" class="btn btn-ghost" type="button">中断</button>
+      </div>
+    </section>
+
+    <!-- 結果 -->
+    <section class="card hidden" id="cardResult">
+      <h2>結果</h2>
+      <p class="muted">画像ごとの結果です。必要ならコピーできます。</p>
+
+      <div class="row">
+        <button id="btnCopyAll" class="btn" type="button">全部コピー</button>
+        <button id="btnDownloadAll" class="btn btn-ghost" type="button">TXT保存</button>
+      </div>
+
+      <div id="resultList" class="resultList"></div>
+
+      <div class="divider"></div>
+
+      <details class="details">
+        <summary>エラーになったとき</summary>
+        <div class="detailsBody">
+          <ul class="list">
+            <li>画像が大きい場合は自動圧縮しますが、失敗するなら枚数を減らして試してください。</li>
+            <li>Worker未設定だと <code>/api/appraise</code> で失敗します（次にWorker側を作ります）。</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <!-- フッター -->
     <footer class="footer">
-      <div>© Prompt Generator (No appraisal logic) / Offline-ready PWA</div>
-      <div class="muted">Cloudflare Pages: ルートにそのまま配置してOK</div>
+      <div class="muted small">
+        ローカルに保存しません（ブラウザ内の一時処理のみ）。<br/>
+        実運用ではAPIキーをフロントに置かず、Worker経由でGeminiへ接続します。
+      </div>
     </footer>
   </main>
 
-  <!-- 画像入力：カメラ（複数） -->
-  <input id="imgInputCamera" type="file" accept="image/*" capture="environment" multiple class="file-hidden" />
-
-  <!-- 画像入力：ギャラリー（複数） -->
-  <input id="imgInputGallery" type="file" accept="image/*" multiple class="file-hidden" />
-
-  <!-- トースト -->
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
-
-  <!-- 下固定バー -->
-  <div id="bottomBar" class="bottom-bar">
-    <button id="btnCamera" class="btn btn-secondary" type="button">カメラ</button>
-    <button id="btnGallery" class="btn btn-secondary" type="button">ギャラリー</button>
-    <button id="btnGemini" class="btn btn-primary" type="button">Geminiへ</button>
-    <button id="btnGeminiImg" class="btn btn-primary" type="button" disabled>画像＋Gemini</button>
-  </div>
-
-  <script src="./app.js"></script>
+  <script src="/app.js" defer></script>
 </body>
 </html>

@@ -1,552 +1,452 @@
-/* 古物鑑定プロンプト生成PWA
- * - 鑑定ロジックなし（プロンプト生成のみ）
- * - 強制挿入：「新規案件」「今回の画像のみ」「過去参照禁止」
- * - 古家具特則 ON/OFF
- * - 価格表記 v1.2.0：500円単位・平均併記
- * - Cloudflare Pages で静的ホスティング
- *
- * ▼修正（踏襲）ポイント
- * - 画像を「1枚選択」から「複数枚トレイ」へ変更
- * - 既存のプロンプト生成ロジック（buildPrompt等）は一切欠損させず維持
- * - Gemini共有UX（コピー→共有→フォールバック）も踏襲しつつ複数画像へ拡張
- */
+/* 古物鑑定 PWA (フロント)
+   - 画像選択 → モード →（通常のみ入力）→ /api/appraise へ送信
+   - 画像は自動圧縮して DataURL(base64) 化
+*/
 
-(function () {
-  const $ = (id) => document.getElementById(id);
+const API_BASE = "https://kogu-prompt-pwa.shiyabako63.workers.dev";
+const $ = (sel) => document.querySelector(sel);
 
-  const state = {
-    mode: "simple", // simple | normal
-    kogu: false,
-    tone: "neutral",
-    itemType: "auto",
-    installPromptEvent: null,
+const els = {
+  btnReset: $("#btnReset"),
+
+  btnCamera: $("#btnCamera"),
+  btnGallery: $("#btnGallery"),
+  fileCamera: $("#fileCamera"),
+  fileGallery: $("#fileGallery"),
+
+  thumbs: $("#thumbs"),
+  btnClearImages: $("#btnClearImages"),
+
+  cardMode: $("#cardMode"),
+  btnSimple: $("#btnSimple"),
+  btnNormal: $("#btnNormal"),
+
+  cardNormal: $("#cardNormal"),
+  btnRunNormal: $("#btnRunNormal"),
+  btnBackToMode: $("#btnBackToMode"),
+
+  fSize: $("#fSize"),
+  fMark: $("#fMark"),
+  fPower: $("#fPower"),
+  fAccessory: $("#fAccessory"),
+  fCondition: $("#fCondition"),
+  fNote: $("#fNote"),
+
+  cardProgress: $("#cardProgress"),
+  progressTitle: $("#progressTitle"),
+  progressSub: $("#progressSub"),
+  btnCancel: $("#btnCancel"),
+
+  cardResult: $("#cardResult"),
+  resultList: $("#resultList"),
+  btnCopyAll: $("#btnCopyAll"),
+  btnDownloadAll: $("#btnDownloadAll"),
+};
+
+const state = {
+  files: /** @type {File[]} */ ([]),
+  previews: /** @type {{name:string, size:number, dataUrl:string, mime:string}[]} */ ([]),
+  abortCtrl: /** @type {AbortController|null} */ (null),
+  lastResults: /** @type {{index:number, name:string, text:string}[]} */ ([]),
+};
+
+init();
+
+function init(){
+  // SW登録
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/service-worker.js").catch(() => {});
+  }
+
+  // ボタン→input起動
+  els.btnCamera.addEventListener("click", () => els.fileCamera.click());
+  els.btnGallery.addEventListener("click", () => els.fileGallery.click());
+
+  // 画像選択
+  els.fileCamera.addEventListener("change", async (e) => onFilesPicked(e.target.files));
+  els.fileGallery.addEventListener("change", async (e) => onFilesPicked(e.target.files));
+
+  // 画像クリア
+  els.btnClearImages.addEventListener("click", resetImagesOnly);
+
+  // リセット
+  els.btnReset.addEventListener("click", fullReset);
+
+  // モード
+  els.btnSimple.addEventListener("click", () => runAppraisal("simple"));
+  els.btnNormal.addEventListener("click", () => showNormalForm());
+
+  // 通常鑑定
+  els.btnRunNormal.addEventListener("click", () => runAppraisal("normal"));
+  els.btnBackToMode.addEventListener("click", () => {
+    hide(els.cardNormal);
+    show(els.cardMode);
+    scrollToTop(els.cardMode);
+  });
+
+  // 中断
+  els.btnCancel.addEventListener("click", () => {
+    if (state.abortCtrl) state.abortCtrl.abort();
+    hide(els.cardProgress);
+  });
+
+  // 結果操作
+  els.btnCopyAll.addEventListener("click", copyAll);
+  els.btnDownloadAll.addEventListener("click", downloadAll);
+
+  syncUI();
+}
+
+function syncUI(){
+  // 画像があるときだけモード表示
+  if (state.previews.length > 0) {
+    show(els.cardMode);
+    els.btnClearImages.disabled = false;
+  } else {
+    hide(els.cardMode);
+    hide(els.cardNormal);
+    hide(els.cardResult);
+    els.btnClearImages.disabled = true;
+  }
+  renderThumbs();
+}
+
+function show(el){ el.classList.remove("hidden"); }
+function hide(el){ el.classList.add("hidden"); }
+
+function scrollToTop(el){
+  el.scrollIntoView({behavior:"smooth", block:"start"});
+}
+
+function resetImagesOnly(){
+  state.files = [];
+  state.previews = [];
+  state.lastResults = [];
+  els.fileCamera.value = "";
+  els.fileGallery.value = "";
+  els.resultList.innerHTML = "";
+  syncUI();
+}
+
+function fullReset(){
+  resetImagesOnly();
+  // フォームもクリア
+  els.fSize.value = "";
+  els.fMark.value = "";
+  els.fPower.value = "";
+  els.fAccessory.value = "";
+  els.fCondition.value = "";
+  els.fNote.value = "";
+  hide(els.cardProgress);
+}
+
+async function onFilesPicked(fileList){
+  if (!fileList || fileList.length === 0) return;
+
+  // 追加選択は「追記」扱い
+  const files = Array.from(fileList).filter(f => f.type.startsWith("image/"));
+  if (files.length === 0) return;
+
+  // まずカード結果/通常フォームは隠す
+  hide(els.cardResult);
+  hide(els.cardNormal);
+
+  // 圧縮&DataURL化
+  els.btnCamera.disabled = true;
+  els.btnGallery.disabled = true;
+
+  try{
+    const converted = [];
+    for (const f of files) {
+      const out = await fileToCompressedDataUrl(f, 1280, 0.85);
+      converted.push({
+        name: f.name || "image",
+        size: f.size,
+        dataUrl: out.dataUrl,
+        mime: out.mime,
+      });
+    }
+
+    // 追記
+    state.files.push(...files);
+    state.previews.push(...converted);
+    syncUI();
+    scrollToTop(els.cardMode);
+  } finally {
+    els.btnCamera.disabled = false;
+    els.btnGallery.disabled = false;
+    // inputの同じファイル再選択が効くように
+    els.fileCamera.value = "";
+    els.fileGallery.value = "";
+  }
+}
+
+function renderThumbs(){
+  els.thumbs.innerHTML = "";
+  state.previews.forEach((p, i) => {
+    const div = document.createElement("div");
+    div.className = "thumb";
+    div.innerHTML = `
+      <img alt="選択画像 ${i+1}" src="${p.dataUrl}">
+      <div class="meta">
+        <span class="badge">#${i+1}</span>
+        <span title="${escapeHtml(p.name)}">${escapeHtml(shorten(p.name, 16))}</span>
+      </div>
+    `;
+    els.thumbs.appendChild(div);
+  });
+}
+
+function shorten(s, n){
+  if (!s) return "";
+  return s.length > n ? s.slice(0, n-1) + "…" : s;
+}
+
+function escapeHtml(s){
+  return String(s)
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#39;");
+}
+
+function showNormalForm(){
+  hide(els.cardResult);
+  show(els.cardNormal);
+  hide(els.cardMode);
+  scrollToTop(els.cardNormal);
+}
+
+function buildExtraForNormal(){
+  const lines = [];
+
+  const size = els.fSize.value.trim();
+  const mark = els.fMark.value.trim();
+  const power = els.fPower.value.trim();
+  const acc = els.fAccessory.value.trim();
+  const cond = els.fCondition.value.trim();
+  const note = els.fNote.value.trim();
+
+  if (size) lines.push(`- サイズ：${size}`);
+  if (mark) lines.push(`- 刻印/型番/サイン：${mark}`);
+  if (power) lines.push(`- 動作/通電：${power}`);
+  if (acc)  lines.push(`- 付属品：${acc}`);
+  if (cond) lines.push(`- 状態メモ：${cond}`);
+  if (note) lines.push(`- 補足：${note}`);
+
+  return lines.join("\n");
+}
+
+async function runAppraisal(mode){
+  if (state.previews.length === 0) return;
+
+  // UI
+  hide(els.cardResult);
+  hide(els.cardNormal);
+  show(els.cardProgress);
+
+  els.progressTitle.textContent = (mode === "simple") ? "簡易鑑定を実行中…" : "通常鑑定を実行中…";
+  els.progressSub.textContent = "画像枚数が多いほど時間がかかります。";
+
+  // cancel用
+  state.abortCtrl = new AbortController();
+
+  // payload
+  const extra = (mode === "normal") ? buildExtraForNormal() : "";
+  const payload = {
+    mode: mode, // "simple" | "normal"
+    // 画像ごとに処理して返してもらう想定
+    images: state.previews.map(p => ({ dataUrl: p.dataUrl, mime: p.mime, name: p.name })),
+    extra: extra,
   };
 
-  // --- PWA install handling ---
-  const btnInstall = $("btnInstall");
-  window.addEventListener("beforeinstallprompt", (e) => {
-    e.preventDefault();
-    state.installPromptEvent = e;
-    btnInstall.hidden = false;
-  });
-
-  btnInstall?.addEventListener("click", async () => {
-    if (!state.installPromptEvent) return;
-    state.installPromptEvent.prompt();
-    try { await state.installPromptEvent.userChoice; } catch (_) {}
-    state.installPromptEvent = null;
-    btnInstall.hidden = true;
-  });
-
-  // --- Service worker registration ---
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./service-worker.js").catch(() => {});
-    });
-  }
-
-  // --- Mode segmented control ---
-  const modeSimple = $("modeSimple");
-  const modeNormal = $("modeNormal");
-
-  function setMode(next) {
-    state.mode = next;
-    const isSimple = next === "simple";
-    modeSimple?.classList.toggle("is-active", isSimple);
-    modeNormal?.classList.toggle("is-active", !isSimple);
-    modeSimple?.setAttribute("aria-pressed", String(isSimple));
-    modeNormal?.setAttribute("aria-pressed", String(!isSimple));
-  }
-
-  modeSimple?.addEventListener("click", () => setMode("simple"));
-  modeNormal?.addEventListener("click", () => setMode("normal"));
-
-  // --- Toggles / selects ---
-  const toggleKogu = $("toggleKogu");
-  toggleKogu?.addEventListener("change", () => (state.kogu = toggleKogu.checked));
-
-  $("tone")?.addEventListener("change", (e) => (state.tone = e.target.value));
-  $("itemType")?.addEventListener("change", (e) => (state.itemType = e.target.value));
-
-  // --- Price formatting (v1.2.0) ---
-  const priceMinRaw = $("priceMinRaw");
-  const priceMaxRaw = $("priceMaxRaw");
-  const priceMinRounded = $("priceMinRounded");
-  const priceMaxRounded = $("priceMaxRounded");
-  const priceAvg = $("priceAvg");
-
-  function parseJPY(input) {
-    if (!input) return null;
-    const s = String(input).replace(/[^\d]/g, "");
-    if (!s) return null;
-    const n = Number(s);
-    return Number.isFinite(n) ? n : null;
-  }
-
-  function roundDown500(n) { return Math.floor(n / 500) * 500; }
-  function roundUp500(n) { return Math.ceil(n / 500) * 500; }
-  function roundNearest500(n) { return Math.round(n / 500) * 500; }
-
-  function formatJPY(n) {
-    if (n === null || n === undefined) return "—";
-    return `${n.toLocaleString("ja-JP")}円`;
-  }
-
-  function updatePricePreview() {
-    const min = parseJPY(priceMinRaw?.value);
-    const max = parseJPY(priceMaxRaw?.value);
-
-    let minR = null, maxR = null, avgR = null;
-    if (min !== null) minR = roundDown500(min);
-    if (max !== null) maxR = roundUp500(max);
-    if (minR !== null && maxR !== null) avgR = roundNearest500((minR + maxR) / 2);
-
-    if (priceMinRounded) priceMinRounded.textContent = formatJPY(minR);
-    if (priceMaxRounded) priceMaxRounded.textContent = formatJPY(maxR);
-    if (priceAvg) priceAvg.textContent = formatJPY(avgR);
-  }
-
-  [priceMinRaw, priceMaxRaw].filter(Boolean).forEach((el) => {
-    el.addEventListener("input", updatePricePreview);
-    el.addEventListener("blur", updatePricePreview);
-  });
-  updatePricePreview();
-
-  // --- Prompt generation ---
-  const btnGenerate = $("btnGenerate");
-  const btnCopy = $("btnCopy");
-  const btnDownload = $("btnDownload");
-  const output = $("output");
-
-  function setOutputButtonsEnabled(enabled) {
-    if (btnCopy) btnCopy.disabled = !enabled;
-    if (btnDownload) btnDownload.disabled = !enabled;
-  }
-
-  function mapItemType(v) {
-    switch (v) {
-      case "furniture": return "家具（棚/机/椅子/什器など）";
-      case "tools": return "道具/民具";
-      case "ceramics": return "陶磁器/ガラス";
-      case "metal": return "金属（鉄/真鍮/銅など）";
-      case "art": return "絵画/版画/工芸";
-      case "toy": return "玩具/ホビー";
-      case "brand": return "ブランド/服飾/小物";
-      case "other": return "その他";
-      default: return "自動判定（入力と画像から推定）";
-    }
-  }
-
-  function toneHint(tone) {
-    if (tone === "buyer") {
-      return "仕入れ判断を重視。リスク・不確実性・偽物/復刻/改造の可能性を強めに指摘し、保守的なレンジも提示。";
-    }
-    if (tone === "seller") {
-      return "販売を重視。魅力の言語化、物語性、見せ方、タイトル案、説明文の骨子、撮影/採寸の要点を厚めに。誇張は禁止。";
-    }
-    return "実務ニュートラル。根拠と不確実性の線引きを明確にし、次に取るべき確認行動を整理。";
-  }
-
-  function getRoundedPriceBlock() {
-    const min = parseJPY(priceMinRaw?.value);
-    const max = parseJPY(priceMaxRaw?.value);
-    const buy = parseJPY($("buyPrice")?.value);
-
-    const minR = min !== null ? roundDown500(min) : null;
-    const maxR = max !== null ? roundUp500(max) : null;
-    const avgR = (minR !== null && maxR !== null) ? roundNearest500((minR + maxR) / 2) : null;
-
-    const lines = [];
-    if (minR !== null || maxR !== null || avgR !== null || buy !== null) {
-      lines.push("【入力済み価格メモ（アプリ側）】");
-      if (minR !== null) lines.push(`- 想定レンジ下限（500円単位・切り下げ）: ${formatJPY(minR)}`);
-      if (maxR !== null) lines.push(`- 想定レンジ上限（500円単位・切り上げ）: ${formatJPY(maxR)}`);
-      if (avgR !== null) lines.push(`- 平均（(下限+上限)/2 を500円単位に丸め）: ${formatJPY(avgR)}`);
-      if (buy !== null) lines.push(`- 仕入れ価格: ${formatJPY(buy)}`);
-      lines.push("");
-    }
-    return lines.join("\n");
-  }
-
-  function forcedHeader() {
-    return [
-      "【強制条件（必ず遵守）】",
-      "1) 新規案件：今回の案件のみを扱う（継続案件として扱わない）",
-      "2) 今回の画像のみ：添付（今回提示）画像以外は参照しない",
-      "3) 過去参照禁止：このチャットの過去ログ・記憶・以前の案件を一切参照しない",
-      "4) 不確実な推定は断定しない。根拠と推定/確度を分離する。",
-      "",
-    ].join("\n");
-  }
-
-  function priceRulesV120() {
-    return [
-      "【価格表記ルール（v1.2.0 準拠）】",
-      "- すべて日本円（円）で提示。",
-      "- 価格は必ず「500円単位」で提示（例：12,500円 / 13,000円）。",
-      "- 価格レンジを出す場合は「下限」「上限」に加えて「平均」も併記すること。",
-      "- 平均は原則として (下限 + 上限) / 2 を用い、500円単位に丸めて示す。",
-      "",
-    ].join("\n");
-  }
-
-  function koguSpecialRules() {
-    return [
-      "【古家具特則（ON）】",
-      "- 構造：ほぞ/蟻組/釘/ビス、組み方の年代感、後補/改造の疑いを観察ポイントとして列挙。",
-      "- 材：無垢/突板/合板、木目、導管、木口、反り・割れ・虫穴の可能性をチェック項目化。",
-      "- 金物：真鍮/鉄/アルミ等の材質推定、ネジ規格や経年、交換痕の見方。",
-      "- 仕上げ：塗装（オイル/ラッカー/ウレタン等）推定、再塗装の兆候、剥離のリスク。",
-      "- 実務：採寸（W/D/H/座面高など）、搬出導線、配送可否、梱包・破損リスクの注意点を必ず出す。",
-      "- 販売：商品名（検索されやすい語）・説明文の骨子・撮影カット案（全景/ディテール/傷/裏/金物）を提示。",
-      "",
-    ].join("\n");
-  }
-
-  function buildPrompt() {
-    const title = $("title")?.value.trim() || "";
-    const keywords = $("keywords")?.value.trim() || "";
-    const dims = $("dims")?.value.trim() || "";
-    const weight = $("weight")?.value.trim() || "";
-    const condition = $("condition")?.value.trim() || "";
-    const marks = $("marks")?.value.trim() || "";
-    const provenance = $("provenance")?.value.trim() || "";
-    const constraints = $("constraints")?.value.trim() || "";
-    const imageInfo = $("imageInfo")?.value.trim() || "";
-
-    const modeLabel = state.mode === "simple" ? "簡易鑑定" : "通常鑑定";
-    const itemTypeLabel = mapItemType(state.itemType);
-
-    const base = [];
-    base.push(forcedHeader());
-
-    base.push("あなたは古物（中古品）鑑定の実務担当者です。");
-    base.push("目的：この案件の『鑑定・真贋/年代/材質推定・価値判断・販売戦略』を、画像と入力情報から整理してください。");
-    base.push(`鑑定モード：${modeLabel}`);
-    base.push(`対象カテゴリ：${itemTypeLabel}`);
-    base.push(`出力の口調方針：${toneHint(state.tone)}`);
-    base.push("");
-
-    base.push(priceRulesV120());
-
-    if (state.mode === "simple") {
-      base.push("【出力要件（簡易鑑定）】");
-      base.push("- まず結論（カテゴリ推定 / 要注意点 / 次の確認3つ）→ 根拠 → 価格レンジ → 出品方針の順。");
-      base.push("- 文章は短め。箇条書き中心。推定は確度（高/中/低）を付ける。");
-      base.push("- 不足情報が多い場合は『追加で必要な画像/情報』を最小限（最大7項目）で提示。");
-      base.push("");
-    } else {
-      base.push("【出力要件（通常鑑定）】");
-      base.push("- ①概要（カテゴリ/用途/年代感）②観察点（画像の何が根拠か）③真贋/復刻/改造リスク");
-      base.push("- ④材質/製法/産地/作りの推定 ⑤相場（根拠付き：類似ワード/市場/状態差）");
-      base.push("- ⑥価格レンジ（下限/上限/平均：500円単位）⑦販売戦略（タイトル案/説明骨子/注意書き）");
-      base.push("- ⑧追加で撮るべき写真・確認質問（優先順位つき）");
-      base.push("");
-    }
-
-    if (state.kogu) base.push(koguSpecialRules());
-
-    base.push("【案件入力（ユーザー提供）】");
-    base.push(`- 案件名/商品名: ${title || "（未入力）"}`);
-    base.push(`- キーワード: ${keywords || "（未入力）"}`);
-    base.push(`- サイズ: ${dims || "（未入力）"}`);
-    base.push(`- 重量: ${weight || "（未入力）"}`);
-    base.push(`- 状態: ${condition || "（未入力）"}`);
-    base.push(`- 刻印/ラベル等: ${marks || "（未入力）"}`);
-    base.push(`- 来歴/入手経路: ${provenance || "（未入力）"}`);
-    base.push(`- 制約（発送/修理/地域など）: ${constraints || "（未入力）"}`);
-    base.push(`- 画像情報メモ: ${imageInfo || "（未入力）"}`);
-    base.push("");
-
-    const priceBlock = getRoundedPriceBlock();
-    if (priceBlock) base.push(priceBlock);
-
-    base.push("【必須アウトプット形式】");
-    base.push("以下の見出しをこの順で出力：");
-    base.push("1) 結論（要約）");
-    base.push("2) カテゴリ/年代/材質の推定（確度付き）");
-    base.push("3) 真贋・復刻・改造・欠損リスク（不確実性の線引き）");
-    base.push("4) 価格レンジ（下限/上限/平均：500円単位）と根拠");
-    base.push("5) 出品戦略（販売先候補、タイトル案、説明文の骨子、注意書き）");
-    base.push("6) 追加で必要な写真/情報（優先順位つき）");
-    base.push("");
-    base.push("【禁止】");
-    base.push("- 過去案件や過去ログの参照、ユーザーの履歴推測。");
-    base.push("- 断定口調での推測（根拠がない場合）。");
-    base.push("- 誇張表現（販売目線でも誇張は不可）。");
-    base.push("");
-
-    return base.join("\n");
-  }
-
-  btnGenerate?.addEventListener("click", () => {
-    const text = buildPrompt();
-    if (output) output.value = text;
-    setOutputButtonsEnabled(true);
-  });
-
-  btnCopy?.addEventListener("click", async () => {
-    const text = output?.value || "";
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      btnCopy.textContent = "コピー済み";
-      setTimeout(() => (btnCopy.textContent = "コピー"), 900);
-    } catch (_) {
-      if (!output) return;
-      output.focus();
-      output.select();
-      document.execCommand("copy");
-    }
-  });
-
-  btnDownload?.addEventListener("click", () => {
-    const text = output?.value || "";
-    if (!text) return;
-    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-    a.href = url;
-    a.download = `kogu-prompt-${stamp}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  });
-
-  /* =========================================================
-     Gemini Share / Image Preview (camera + gallery) - 複数画像トレイ版
-  ========================================================= */
-  const outputEl = document.querySelector("textarea#output");
-  const imgInputCamera = document.getElementById("imgInputCamera");
-  const imgInputGallery = document.getElementById("imgInputGallery");
-
-  // 複数画像プレビューDOM（index.htmlに存在）
-  const imgPreviewWrap = document.getElementById("imgPreviewWrap");
-  const imgPreviewList = document.getElementById("imgPreviewList");
-  const btnClearImages = document.getElementById("btnClearImages");
-
-  const toastEl = document.getElementById("toast");
-
-  const btnCamera = document.getElementById("btnCamera");
-  const btnGallery = document.getElementById("btnGallery");
-  const btnGemini = document.getElementById("btnGemini");
-  const btnGeminiImg = document.getElementById("btnGeminiImg");
-
-  // ★変更：1枚→複数
-  let imageTray = []; // [{ id, file, url }]
-  let toastTimer = null;
-
-  function toast(msg, ms = 1400) {
-    if (!toastEl) return;
-    toastEl.textContent = msg;
-    toastEl.style.display = "block";
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (toastEl.style.display = "none"), ms);
-  }
-
-  function getPromptText() {
-    return (outputEl?.value || "").trim();
-  }
-
-  async function copyToClipboard(text) {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-    if (!outputEl) throw new Error("output not found");
-    outputEl.focus();
-    outputEl.select();
-    const ok = document.execCommand("copy");
-    window.getSelection?.().removeAllRanges?.();
-    if (!ok) throw new Error("copy failed");
-    return true;
-  }
-
-  async function shareText(text) {
-    if (!navigator.share) return false;
-    await navigator.share({ text, title: "Prompt" });
-    return true;
-  }
-
-  async function shareImagesAndText(files, text) {
-    if (!navigator.share) return false;
-    if (navigator.canShare && !navigator.canShare({ files })) return false;
-    await navigator.share({ files, text, title: "Images + Prompt" });
-    return true;
-  }
-
-  async function shareImagesOnly(files) {
-    if (!navigator.share) return false;
-    if (navigator.canShare && !navigator.canShare({ files })) return false;
-    await navigator.share({ files, title: "Images" });
-    return true;
-  }
-
-  function openGeminiWeb() {
-    window.open("https://gemini.google.com/", "_blank", "noopener");
-  }
-
-  function setBusy(isBusy) {
-    if (btnCamera) btnCamera.disabled = isBusy;
-    if (btnGallery) btnGallery.disabled = isBusy;
-    if (btnGemini) btnGemini.disabled = isBusy;
-    if (btnGeminiImg) btnGeminiImg.disabled = isBusy || imageTray.length === 0;
-    if (btnClearImages) btnClearImages.disabled = isBusy || imageTray.length === 0;
-  }
-
-  function renderImageTray() {
-    if (!imgPreviewWrap || !imgPreviewList) return;
-
-    imgPreviewList.innerHTML = "";
-    if (imageTray.length === 0) {
-      imgPreviewWrap.style.display = "none";
-      if (btnGeminiImg) btnGeminiImg.disabled = true;
-      if (btnClearImages) btnClearImages.disabled = true;
-      return;
-    }
-
-    imgPreviewWrap.style.display = "block";
-    imageTray.forEach((item) => {
-      const img = document.createElement("img");
-      img.src = item.url;
-      img.className = "img-thumb";
-      img.alt = "selected";
-      imgPreviewList.appendChild(img);
+  try{
+    const res = await fetch(`${API_BASE}/api/appraise`, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(payload),
+      signal: state.abortCtrl.signal,
     });
 
-    if (btnGeminiImg) btnGeminiImg.disabled = false;
-    if (btnClearImages) btnClearImages.disabled = false;
+    if (!res.ok) {
+      const t = await safeText(res);
+      throw new Error(`HTTP ${res.status}\n${t || "リクエストに失敗しました"}`);
+    }
+
+    /** 期待するレスポンス例：
+     * { results: [ { index:0, text:"..." }, { index:1, text:"..." } ] }
+     */
+    const data = await res.json();
+    const results = Array.isArray(data?.results) ? data.results : [];
+    if (results.length === 0) {
+      throw new Error("結果が空です（Worker側の返却形式を確認してください）");
+    }
+
+    // 整形して表示
+    state.lastResults = results.map(r => ({
+      index: Number.isFinite(r.index) ? r.index : 0,
+      name: state.previews[Number.isFinite(r.index) ? r.index : 0]?.name || `image`,
+      text: String(r.text || ""),
+    }));
+
+    renderResults();
+    show(els.cardResult);
+    scrollToTop(els.cardResult);
+  } catch(err){
+    if (err?.name === "AbortError") return;
+    renderError(String(err?.message || err));
+    show(els.cardResult);
+    scrollToTop(els.cardResult);
+  } finally {
+    hide(els.cardProgress);
+    state.abortCtrl = null;
   }
+}
 
-  function addImages(fileList) {
-    const files = Array.from(fileList || []);
-    if (files.length === 0) return;
+async function safeText(res){
+  try { return await res.text(); } catch { return ""; }
+}
 
-    files.forEach((file) => {
-      imageTray.push({
-        id: (crypto?.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()),
-        file,
-        url: URL.createObjectURL(file),
-      });
+function renderResults(){
+  els.resultList.innerHTML = "";
+
+  state.lastResults.forEach((r) => {
+    const card = document.createElement("div");
+    card.className = "resultCard";
+
+    const title = `画像 #${r.index + 1}（${shorten(r.name, 24)}）`;
+    card.innerHTML = `
+      <div class="resultHead">
+        <div class="resultTitle">${escapeHtml(title)}</div>
+        <div class="row" style="margin:0;">
+          <button class="btn btn-ghost btnCopyOne" type="button">コピー</button>
+        </div>
+      </div>
+      <div class="resultBody">
+        <div class="resultText"></div>
+      </div>
+    `;
+
+    card.querySelector(".resultText").textContent = r.text;
+
+    const btn = card.querySelector(".btnCopyOne");
+    btn.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(r.text);
+      btn.textContent = "コピー済み";
+      setTimeout(() => (btn.textContent = "コピー"), 900);
     });
 
-    renderImageTray();
-  }
-
-  function clearImages() {
-    imageTray.forEach((i) => {
-      try { URL.revokeObjectURL(i.url); } catch (_) {}
-    });
-    imageTray = [];
-    if (imgInputCamera) imgInputCamera.value = "";
-    if (imgInputGallery) imgInputGallery.value = "";
-    renderImageTray();
-  }
-
-  // Reset からも呼ぶため公開
-  function clearSelectedImage() {
-    // 互換：既存コードの呼び出し名を残しつつ実体は複数クリア
-    clearImages();
-  }
-
-  function openPicker(inputEl) {
-    if (!inputEl) return;
-    try {
-      if (inputEl.showPicker) inputEl.showPicker();
-      else inputEl.click();
-    } catch {
-      toast("画像ピッカーを開けませんでした");
-    }
-  }
-
-  btnCamera?.addEventListener("click", () => openPicker(imgInputCamera));
-  btnGallery?.addEventListener("click", () => openPicker(imgInputGallery));
-
-  imgInputCamera?.addEventListener("change", () => {
-    addImages(imgInputCamera.files);
-    if (imgInputCamera.files?.length) toast(`カメラ画像を追加しました（${imgInputCamera.files.length}枚）`);
+    els.resultList.appendChild(card);
   });
+}
 
-  imgInputGallery?.addEventListener("change", () => {
-    addImages(imgInputGallery.files);
-    if (imgInputGallery.files?.length) toast(`ギャラリー画像を追加しました（${imgInputGallery.files.length}枚）`);
-  });
+function renderError(msg){
+  els.resultList.innerHTML = "";
+  const card = document.createElement("div");
+  card.className = "resultCard";
+  card.innerHTML = `
+    <div class="resultHead">
+      <div class="resultTitle">エラー</div>
+    </div>
+    <div class="resultBody">
+      <div class="resultText"></div>
+    </div>
+  `;
+  card.querySelector(".resultText").textContent =
+`鑑定に失敗しました。
 
-  btnClearImages?.addEventListener("click", () => {
-    clearImages();
-    toast("画像をクリアしました");
-  });
+考えられる原因：
+- /api/appraise（Worker）が未設定
+- Worker側でGemini APIが失敗
+- 画像が大きすぎる / 枚数が多すぎる
 
-  btnGemini?.addEventListener("click", async () => {
-    const text = getPromptText();
-    if (!text) return toast("出力が空です");
+詳細：
+${msg}`;
+  els.resultList.appendChild(card);
+}
 
-    setBusy(true);
-    try {
-      try {
-        await copyToClipboard(text);
-        toast("コピーしました（共有を開きます）");
-      } catch {
-        toast("コピーできませんでした（共有を試します）");
-      }
+async function copyAll(){
+  if (!state.lastResults.length) return;
+  const txt = state.lastResults
+    .sort((a,b)=>a.index-b.index)
+    .map(r => `【画像 #${r.index+1}】\n${r.text}`)
+    .join("\n\n--------------------\n\n");
+  await navigator.clipboard.writeText(txt);
+  els.btnCopyAll.textContent = "コピー済み";
+  setTimeout(()=> els.btnCopyAll.textContent = "全部コピー", 900);
+}
 
-      try {
-        const ok = await shareText(text);
-        if (!ok) openGeminiWeb();
-      } catch {
-        openGeminiWeb();
-      }
-    } finally {
-      setBusy(false);
-    }
-  });
+function downloadAll(){
+  if (!state.lastResults.length) return;
+  const txt = state.lastResults
+    .sort((a,b)=>a.index-b.index)
+    .map(r => `【画像 #${r.index+1}】\n${r.text}`)
+    .join("\n\n--------------------\n\n");
 
-  btnGeminiImg?.addEventListener("click", async () => {
-    const text = getPromptText();
-    if (imageTray.length === 0) return toast("画像が未選択です");
-    if (!text) return toast("プロンプトが空です");
+  const blob = new Blob([txt], {type:"text/plain;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `appraisal_${new Date().toISOString().slice(0,10)}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
-    const files = imageTray.map((x) => x.file);
+/**
+ * 画像を圧縮して DataURL にする
+ * @param {File} file
+ * @param {number} maxSide
+ * @param {number} quality 0-1 (jpeg/webp)
+ * @returns {Promise<{dataUrl:string, mime:string}>}
+ */
+function fileToCompressedDataUrl(file, maxSide, quality){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
 
-    setBusy(true);
-    try {
-      try {
-        await copyToClipboard(text);
-        toast("コピーしました（画像＋共有を開きます）");
-      } catch {
-        toast("コピーできませんでした（画像共有を試します）");
-      }
+    img.onload = async () => {
+      try{
+        const {w, h} = fitInside(img.width, img.height, maxSide);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d", {alpha:false});
+        ctx.drawImage(img, 0, 0, w, h);
 
-      try {
-        const ok = await shareImagesAndText(files, text);
-        if (ok) {
-          clearImages();
-          toast("共有しました（画像をクリア）");
-          return;
+        // 出力形式：できれば webp、だめなら jpeg、PNGはそのままだと重いのでjpeg/webpへ寄せる
+        const prefer = "image/webp";
+        let mime = prefer;
+        let dataUrl = "";
+        try{
+          dataUrl = canvas.toDataURL(mime, quality);
+          if (!dataUrl.startsWith("data:image/webp")) throw new Error("webp not supported");
+        } catch {
+          mime = "image/jpeg";
+          dataUrl = canvas.toDataURL(mime, quality);
         }
 
-        const ok2 = await shareImagesOnly(files);
-        if (ok2) {
-          clearImages();
-          alert("この端末では「画像＋テキスト」の同時共有が不安定です。\nGemini側でプロンプトを貼り付けてください（コピー済み）。");
-          return;
-        }
-
-        openGeminiWeb();
-      } catch {
-        openGeminiWeb();
+        resolve({dataUrl, mime});
+      } catch(e){
+        reject(e);
+      } finally {
+        URL.revokeObjectURL(url);
       }
-    } finally {
-      setBusy(false);
-    }
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("画像の読み込みに失敗しました"));
+    };
+
+    img.src = url;
   });
+}
 
-  // --- Reset（末尾で画像リセットが必要なため、ここで再定義して上書き実行しない）
-  // 既存のリセット処理内で clearSelectedImage() を呼んでいるので、上の互換関数で効く。
-
-  // 初期状態
-  renderImageTray();
-  setOutputButtonsEnabled(false);
-})();
+function fitInside(w, h, maxSide){
+  if (w <= maxSide && h <= maxSide) return {w, h};
+  const scale = maxSide / Math.max(w, h);
+  return { w: Math.round(w * scale), h: Math.round(h * scale) };
+}
